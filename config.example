@@ -1,0 +1,24 @@
+# Example configuration file for GoStoreLog
+# Copy this file to config.yaml or config.json and edit as needed
+
+# Node Configuration
+node_id: "node1"
+bind_addr: "0.0.0.0:7946"
+advertise_addr: "127.0.0.1:7946"
+
+# Redis Configuration
+redis_addr: "localhost:6379"
+
+# DNS Configuration
+service_name: "gostorelog-cluster"
+cluster_port: "7946"
+
+# Data Configuration
+data_dir: "./data"
+
+# Timing Configuration
+watch_interval: 30  # seconds
+leader_ttl: 10      # seconds
+
+# Storage Configuration
+max_file_size: 10485760  # 10MB in bytes

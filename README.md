@@ -75,6 +75,8 @@ Set environment variables for cluster configuration. The leader node coordinates
 
 ## Configuration
 
+Configuration can be set via environment variables or a configuration file. See `config.example` for a sample configuration file.
+
 - `DataDir`: Directory for data files (default: `./data`).
 - `MaxFileSize`: Max size per segment in bytes (default: 10MB).
 

@@ -37,6 +37,10 @@ func NewFileStorageRepository(config *entity.Config) *FileStorageRepository {
 
 // loadExistingData loads existing partitions and segments from disk
 func (r *FileStorageRepository) loadExistingData() {
+	if r.config == nil {
+		log.Printf("Config is nil, skipping loadExistingData")
+		return
+	}
 	// List partition directories
 	entries, err := os.ReadDir(r.config.DataDir)
 	if err != nil {
@@ -44,16 +48,26 @@ func (r *FileStorageRepository) loadExistingData() {
 		os.MkdirAll(r.config.DataDir, 0755)
 		return
 	}
+	if entries == nil {
+		return
+	}
 	for _, entry := range entries {
-		if entry.IsDir() {
-			partitionKey := entry.Name()
-			r.loadPartition(partitionKey)
+		if entry == nil || !entry.IsDir() {
+			continue
 		}
+		partitionKey := entry.Name()
+		if partitionKey == "" {
+			continue
+		}
+		r.loadPartition(partitionKey)
 	}
 }
 
 // loadPartition loads a partition from disk
 func (r *FileStorageRepository) loadPartition(partitionKey string) {
+	if r.config == nil || partitionKey == "" {
+		return
+	}
 	partitionDir := filepath.Join(r.config.DataDir, partitionKey)
 	partition := entity.NewPartition(partitionKey, r.config.DataDir, r.config.MaxFileSize)
 	// Load segments
@@ -61,60 +75,88 @@ func (r *FileStorageRepository) loadPartition(partitionKey string) {
 	if err != nil {
 		return
 	}
+	if entries == nil {
+		return
+	}
 	for _, entry := range entries {
-		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".store" {
-			// Load segment
-			segmentPath := filepath.Join(partitionDir, entry.Name())
-			baseOffsetStr := entry.Name()[:len(entry.Name())-6] // remove .store
-			var baseOffset uint64
-			fmt.Sscanf(baseOffsetStr, "segment_%d", &baseOffset)
-			segment := entity.NewSegment(partitionKey, baseOffset, r.config.MaxFileSize, r.config.DataDir)
-			// Calculate size and next offset
-			if stat, err := os.Stat(segmentPath); err == nil {
-				segment.Size = uint64(stat.Size())
-			}
-			// Load index to get next offset
-			indexPath := filepath.Join(partitionDir, baseOffsetStr+".index")
-			if file, err := os.Open(indexPath); err == nil {
-				defer file.Close()
-				stat, err := file.Stat()
-				if err == nil {
-					size := stat.Size()
-					count := size / 16 // each entry 16 bytes
-					segment.NextOffset = baseOffset + uint64(count)
-				}
-			}
-			partition.Segments = append(partition.Segments, segment)
-			if segment.NextOffset > partition.CurrentOffset {
-				partition.CurrentOffset = segment.NextOffset
+		if entry == nil || entry.IsDir() || filepath.Ext(entry.Name()) != ".store" {
+			continue
+		}
+		// Load segment
+		segmentPath := filepath.Join(partitionDir, entry.Name())
+		baseOffsetStr := entry.Name()[:len(entry.Name())-6] // remove .store
+		var baseOffset uint64
+		fmt.Sscanf(baseOffsetStr, "segment_%d", &baseOffset)
+		segment := entity.NewSegment(partitionKey, baseOffset, r.config.MaxFileSize, r.config.DataDir)
+		// Calculate size and next offset
+		if stat, err := os.Stat(segmentPath); err == nil {
+			segment.Size = uint64(stat.Size())
+		}
+		// Load index to get next offset
+		indexPath := filepath.Join(partitionDir, baseOffsetStr+".index")
+		if file, err := os.Open(indexPath); err == nil {
+			defer file.Close()
+			stat, err := file.Stat()
+			if err == nil {
+				size := stat.Size()
+				count := size / 16 // each entry 16 bytes
+				segment.NextOffset = baseOffset + uint64(count)
 			}
 		}
+		if partition.Segments == nil {
+			partition.Segments = []*entity.Segment{}
+		}
+		partition.Segments = append(partition.Segments, segment)
+		if segment.NextOffset > partition.CurrentOffset {
+			partition.CurrentOffset = segment.NextOffset
+		}
+	}
+	if r.partitions == nil {
+		r.partitions = make(map[string]*entity.Partition)
 	}
 	r.partitions[partitionKey] = partition
 }
 
 // Append appends a record to the storage
 func (r *FileStorageRepository) Append(record *entity.Record) error {
+	if r.config == nil || record == nil || record.PartitionKey == "" {
+		return errors.New("invalid config, record, or partition key")
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	partition, exists := r.partitions[record.PartitionKey]
 	if !exists {
 		partition = entity.NewPartition(record.PartitionKey, r.config.DataDir, r.config.MaxFileSize)
+		if r.partitions == nil {
+			r.partitions = make(map[string]*entity.Partition)
+		}
 		r.partitions[record.PartitionKey] = partition
 		// Create partition dir
 		os.MkdirAll(filepath.Join(r.config.DataDir, record.PartitionKey), 0755)
 	}
+	if partition == nil {
+		return errors.New("partition is nil")
+	}
 
 	activeSegment := partition.GetActiveSegment()
+	if activeSegment == nil {
+		return errors.New("active segment is nil")
+	}
 
 	// Calculate record size (data + metadata)
 	recordSize := uint64(len(record.Data) + 16) // rough estimate
 
 	if activeSegment.ShouldRollOver(recordSize) {
 		activeSegment.IsActive = false
+		if partition.Segments == nil {
+			partition.Segments = []*entity.Segment{}
+		}
 		partition.Segments = append(partition.Segments, entity.NewSegment(record.PartitionKey, partition.CurrentOffset, r.config.MaxFileSize, r.config.DataDir))
 		activeSegment = partition.Segments[len(partition.Segments)-1]
+		if activeSegment == nil {
+			return errors.New("new active segment is nil")
+		}
 	}
 
 	record.Offset = activeSegment.NextOffset
@@ -204,17 +246,26 @@ func (r *FileStorageRepository) Append(record *entity.Record) error {
 
 // Read reads a record by offset
 func (r *FileStorageRepository) Read(partitionKey string, offset uint64) (*entity.Record, error) {
+	if partitionKey == "" {
+		return nil, errors.New("invalid partition key")
+	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	partition, exists := r.partitions[partitionKey]
-	if !exists {
+	if !exists || partition == nil {
 		return nil, errors.New("partition not found")
+	}
+	if partition.Segments == nil || len(partition.Segments) == 0 {
+		return nil, errors.New("no segments found")
 	}
 
 	// Find the segment containing the offset
 	var targetSegment *entity.Segment
 	for _, seg := range partition.Segments {
+		if seg == nil {
+			continue
+		}
 		if offset >= seg.BaseOffset && offset < seg.NextOffset {
 			targetSegment = seg
 			break
@@ -283,6 +334,9 @@ func (r *FileStorageRepository) Close() error {
 
 // sanityCheck verifies store and index consistency for a segment
 func (r *FileStorageRepository) sanityCheck(seg *entity.Segment) error {
+	if seg == nil || seg.StorePath == "" || seg.IndexPath == "" {
+		return errors.New("invalid segment")
+	}
 	storeFile, err := os.Open(seg.StorePath)
 	if err != nil {
 		return err
@@ -344,6 +398,10 @@ func (r *FileStorageRepository) repairWorker() {
 
 // repairSegment checks and repairs a segment
 func (r *FileStorageRepository) repairSegment(seg *entity.Segment) {
+	if seg == nil || seg.StorePath == "" || seg.IndexPath == "" {
+		log.Printf("Invalid segment for repair")
+		return
+	}
 	storeFile, err := os.Open(seg.StorePath)
 	if err != nil {
 		log.Printf("Failed to open store file for repair: %v", err)
