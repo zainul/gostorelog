@@ -3,6 +3,10 @@ package cluster
 import (
 	"net"
 	"testing"
+
+	"gostorelog/internal/entity"
+	"gostorelog/internal/repository"
+	"gostorelog/internal/usecase"
 )
 
 // isPortAvailable checks if a port is available for binding
@@ -19,6 +23,10 @@ func TestManager_NewManager(t *testing.T) {
 	config := DefaultConfig()
 	config.NodeID = "test-node"
 
+	// Create a dummy usecase
+	repo := repository.NewFileStorageRepository(&entity.Config{DataDir: "/tmp", MaxFileSize: 1024})
+	uc := usecase.NewStorageUsecase(repo)
+
 	// Check if port is available
 	if !isPortAvailable("7946") {
 		t.Skipf("Port 7946 is already in use, skipping test")
@@ -27,7 +35,7 @@ func TestManager_NewManager(t *testing.T) {
 	t.Logf("Scenario: Creating cluster manager for node %s", config.NodeID)
 	t.Logf("Input: Config=%+v", config)
 
-	manager, err := NewManager(config)
+	manager, err := NewManager(config, []string{}, uc)
 	t.Logf("Output: NewManager returned manager=%v, error=%v", manager != nil, err)
 
 	if err != nil {
@@ -42,12 +50,16 @@ func TestManager_IsLeader(t *testing.T) {
 	config := DefaultConfig()
 	config.NodeID = "test-node"
 
+	// Create a dummy usecase
+	repo := repository.NewFileStorageRepository(&entity.Config{DataDir: "/tmp", MaxFileSize: 1024})
+	uc := usecase.NewStorageUsecase(repo)
+
 	// Check if port is available
 	if !isPortAvailable("7946") {
 		t.Skipf("Port 7946 is already in use, skipping test")
 	}
 
-	manager, err := NewManager(config)
+	manager, err := NewManager(config, []string{}, uc)
 	if err != nil {
 		t.Logf("Manager creation failed: %v", err)
 		return

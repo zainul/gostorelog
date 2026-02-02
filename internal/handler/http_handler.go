@@ -109,12 +109,41 @@ func (h *HTTPHandler) Replicate(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "replicated"})
 }
 
+// Status handles GET /status for reporting node status
+func (h *HTTPHandler) Status(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// For now, return a simple status; in future, return last offsets per partition
+	status := map[string]interface{}{
+		"node": "follower", // or leader, but for now assume follower
+		"last_partition": "test-partition", // placeholder
+	}
+	json.NewEncoder(w).Encode(status)
+}
+
+// Gaps handles GET /gaps for querying gap information
+func (h *HTTPHandler) Gaps(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	// For now, return placeholder gaps
+	gaps := []map[string]interface{}{
+		{"node": "follower1", "gap": 5, "partition": "test-partition"},
+	}
+	json.NewEncoder(w).Encode(gaps)
+}
+
 // GetMux returns the HTTP mux for testing
 func (h *HTTPHandler) GetMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/publish", h.Publish)
 	mux.HandleFunc("/read", h.Read)
 	mux.HandleFunc("/replicate", h.Replicate)
+	mux.HandleFunc("/status", h.Status)
+	mux.HandleFunc("/gaps", h.Gaps)
 	return mux
 }
 

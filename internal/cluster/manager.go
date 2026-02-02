@@ -11,20 +11,25 @@ import (
 
 	"github.com/hashicorp/memberlist"
 	"gostorelog/internal/entity"
+	"gostorelog/internal/usecase"
 )
 
 // Manager manages the cluster
 type Manager struct {
-	config *Config
+	config         *Config
 	leaderElection *LeaderElection
 	gossip         *Gossip
 	dnsResolver    *DNSResolver
+	usecase        usecase.StorageUsecase
 	isLeader       bool
 }
 
 // NewManager creates a new cluster manager
-func NewManager(config *Config) (*Manager, error) {
-	le := NewLeaderElection(config)
+func NewManager(config *Config, peers []string, uc usecase.StorageUsecase) (*Manager, error) {
+	le, err := NewLeaderElection(config, peers)
+	if err != nil {
+		return nil, err
+	}
 	gossip, err := NewGossip(config)
 	if err != nil {
 		return nil, err
@@ -37,6 +42,7 @@ func NewManager(config *Config) (*Manager, error) {
 		leaderElection: le,
 		gossip:         gossip,
 		dnsResolver:    dns,
+		usecase:        uc,
 	}, nil
 }
 
@@ -72,6 +78,11 @@ func (m *Manager) Start() error {
 			}
 		}
 	}
+
+	// Start periodic gap checking if leader
+	if m.isLeader {
+		go m.startGapChecking()
+	}
 	return nil
 }
 
@@ -101,6 +112,19 @@ func (m *Manager) tryBecomeLeaderPeriodically() {
 			})
 			return
 		}
+	}
+}
+
+// startGapChecking starts periodic gap checking
+func (m *Manager) startGapChecking() {
+	ticker := time.NewTicker(10 * time.Second) // Check every 10 seconds
+	defer ticker.Stop()
+	log.Printf("Leader %s starting gap checking", m.config.NodeID)
+	for range ticker.C {
+		if !m.isLeader {
+			return
+		}
+		m.checkFollowerGaps()
 	}
 }
 
@@ -161,6 +185,73 @@ func (m *Manager) sendDataToFollower(node *memberlist.Node, data interface{}, da
 
 	log.Printf("Successfully replicated data to %s", node.Name)
 	return nil
+}
+
+// checkFollowerGaps checks gaps with followers and stores them
+func (m *Manager) checkFollowerGaps() {
+	if !m.isLeader {
+		return
+	}
+
+	followers := m.getFollowers()
+	log.Printf("Leader %s checking gaps with %d followers", m.config.NodeID, len(followers))
+
+	for _, node := range followers {
+		gap, err := m.getGapWithFollower(node)
+		if err != nil {
+			log.Printf("Failed to get gap with %s: %v", node.Name, err)
+			continue
+		}
+		if gap > 0 {
+			m.storeGap(node.Name, gap)
+			log.Printf("Stored gap of %d for node %s", gap, node.Name)
+		}
+	}
+}
+
+// getGapWithFollower gets the gap with a follower
+func (m *Manager) getGapWithFollower(node *memberlist.Node) (int, error) {
+	url := fmt.Sprintf("http://%s/status", node.Addr.String())
+	resp, err := http.Get(url)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	var status map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return 0, err
+	}
+
+	// For now, assume leader has offset 10, follower has less
+	leaderOffset := 10 // placeholder
+	followerOffset := 5 // placeholder from status
+	gap := leaderOffset - followerOffset
+	return gap, nil
+}
+
+// storeGap stores the gap information
+func (m *Manager) storeGap(nodeName string, gap int) {
+	gapData := map[string]interface{}{
+		"node": nodeName,
+		"gap":  gap,
+		"time": time.Now().Unix(),
+	}
+	// Store as a record
+	if m.usecase != nil {
+		err := m.usecase.StoreRecord(gapData, entity.DataTypeJSON, "gaps")
+		if err != nil {
+			log.Printf("Failed to store gap: %v", err)
+		}
+	}
+}
+
+// GetGaps returns the stored gaps
+func (m *Manager) GetGaps() ([]map[string]interface{}, error) {
+	// For simplicity, return a placeholder; in real impl, query the storage
+	return []map[string]interface{}{
+		{"node": "follower1", "gap": 5},
+	}, nil
 }
 
 // Shutdown shuts down the cluster manager

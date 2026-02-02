@@ -46,23 +46,23 @@ func main() {
 		clusterConfig.DataDir = dataDir
 	}
 
-	// Initialize cluster manager
-	clusterManager, err := cluster.NewManager(clusterConfig)
-	if err != nil {
-		log.Fatal("Failed to create cluster manager:", err)
-	}
-	if err := clusterManager.Start(); err != nil {
-		log.Fatal("Failed to start cluster:", err)
-	}
-
 	// Initialize layers
 	repo := repository.NewFileStorageRepository(config)
 	uc := usecase.NewStorageUsecase(repo)
-	uc.SetReplicator(clusterManager) // Set cluster manager as replicator
 	connector := handler.NewGoPubSubConnector()
 	storageHandler := handler.NewStorageHandler(uc, connector)
 	httpHandler := handler.NewHTTPHandler(uc)
 	server := httpHandler.StartServer(":8080")
+
+	// Initialize cluster manager
+	clusterManager, err := cluster.NewManager(clusterConfig, []string{}, uc)
+	if err != nil {
+		log.Fatal("Failed to create cluster manager:", err)
+	}
+	uc.SetReplicator(clusterManager) // Set cluster manager as replicator
+	if err := clusterManager.Start(); err != nil {
+		log.Fatal("Failed to start cluster:", err)
+	}
 
 	// Start handler
 	ctx, cancel := context.WithCancel(context.Background())

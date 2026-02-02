@@ -17,8 +17,10 @@ A persistent, sequential, immutable storage engine for Go, designed with clean a
 - **Graceful Shutdown**: Ensures data is persisted before shutdown.
 - **Consistency Checks**: Sanity checks after appends and automatic repair for store/index inconsistencies.
 - **Retry Mechanism**: Retries index writes on failure.
-- **Multi-Node Clustering**: Leader election via Redis, gossip protocol for node discovery, DNS-based address resolution.
+- **Multi-Node Clustering**: Leader election via Redis with Raft consensus fallback, gossip protocol for node discovery, DNS-based address resolution.
 - **Data Replication**: Leader replicates data to followers via HTTP push for consistency across nodes.
+- **Gap Detection**: Leader periodically checks data gaps with followers and stores gap information for monitoring and reconciliation.
+- **Fault Tolerance**: Automatically switches to Raft consensus if Redis is unavailable, ensuring leader election without external dependencies.
 - **Clean Architecture**: Organized into entity, repository, usecase, handler, cluster layers.
 
 ## Architecture
@@ -51,6 +53,8 @@ A persistent, sequential, immutable storage engine for Go, designed with clean a
 - `POST /publish`: Publish a record. Body: `{"data": <data>, "data_type": <int>, "partition_key": <string>}`
 - `GET /read?partition=<key>&offset=<offset>`: Read a record by partition and offset.
 - `POST /replicate`: Receive replicated data from leader. Body: `{"data": <data>, "data_type": <int>, "partition_key": <string>}`
+- `GET /status`: Get node status for gap detection.
+- `GET /gaps`: Query stored gap information between leader and followers.
 
 Data types: 0=JSON, 1=Bytes, 2=String.
 

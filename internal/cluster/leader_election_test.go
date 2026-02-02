@@ -26,7 +26,10 @@ func TestLeaderElection_TryBecomeLeader(t *testing.T) {
 		t.Skipf("Redis at %s is not available, skipping test", config.RedisAddr)
 	}
 
-	le := NewLeaderElection(config)
+	le, err := NewLeaderElection(config, []string{})
+	if err != nil {
+		t.Skipf("Leader election initialization failed: %v", err)
+	}
 
 	// Scenario: Attempt to become leader when no one else is
 	t.Logf("Scenario: Node %s attempts to become leader", config.NodeID)
@@ -44,6 +47,30 @@ func TestLeaderElection_TryBecomeLeader(t *testing.T) {
 		le.Resign()
 	} else {
 		t.Logf("Result: Node did not become leader (key already exists)")
+	}
+
+	le.Close()
+}
+
+func TestLeaderElection_RaftFallback(t *testing.T) {
+	config := DefaultConfig()
+	config.NodeID = "test-node-raft"
+	config.RedisAddr = "invalid:6379" // Invalid Redis address to force Raft
+
+	// Test with Raft fallback
+	le, err := NewLeaderElection(config, []string{})
+	if err != nil {
+		t.Skipf("Raft initialization failed: %v", err)
+	}
+	defer le.Close()
+
+	// Since it's a single node Raft, it should become leader
+	time.Sleep(2 * time.Second) // Allow Raft to stabilize
+
+	isLeader := le.IsLeader()
+	t.Logf("Node is leader with Raft: %v", isLeader)
+	if !isLeader {
+		t.Logf("Single node Raft should be leader")
 	}
 
 	le.Close()
