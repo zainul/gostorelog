@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"gostorelog/internal/entity"
 	"gostorelog/internal/handler"
@@ -25,6 +26,8 @@ func main() {
 	uc := usecase.NewStorageUsecase(repo)
 	connector := handler.NewGoPubSubConnector()
 	storageHandler := handler.NewStorageHandler(uc, connector)
+	httpHandler := handler.NewHTTPHandler(uc)
+	server := httpHandler.StartServer(":8080")
 
 	// Start handler
 	ctx, cancel := context.WithCancel(context.Background())
@@ -40,7 +43,15 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
 
-	// Close
+	// Graceful shutdown
+	log.Println("Shutting down server...")
+	ctxShutdown, cancelShutdown := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelShutdown()
+
+	if err := server.Shutdown(ctxShutdown); err != nil {
+		log.Printf("Server shutdown error: %v", err)
+	}
+
 	connector.Close()
 	repo.Close()
 	log.Println("Shutdown complete")

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"log"
 	"sync"
 )
 
@@ -50,6 +51,9 @@ func (c *GoPubSubConnector) Subscribe(ctx context.Context, topic string, handler
 
 	go func() {
 		defer func() {
+			if err := recover(); err != nil {
+				log.Printf("Panic recovered in pub/sub handler: %v", err)
+			}
 			c.mu.Lock()
 			// Remove channel from topics
 			if chans, exists := c.topics[topic]; exists {
@@ -72,9 +76,16 @@ func (c *GoPubSubConnector) Subscribe(ctx context.Context, topic string, handler
 		for {
 			select {
 			case msg := <-ch:
-				if err := handler(msg); err != nil {
-					// Log error
-				}
+				func() {
+					defer func() {
+						if err := recover(); err != nil {
+							log.Printf("Panic recovered in message handler: %v", err)
+						}
+					}()
+					if err := handler(msg); err != nil {
+						log.Printf("Handler error: %v", err)
+					}
+				}()
 			case <-ctx.Done():
 				return
 			}

@@ -1,11 +1,11 @@
 package repository
 
 import (
-	"bufio"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -18,6 +18,7 @@ type FileStorageRepository struct {
 	config     *entity.Config
 	partitions map[string]*entity.Partition
 	mu         sync.RWMutex
+	repairChan chan string // channel to trigger repair for partition
 }
 
 // NewFileStorageRepository creates a new file storage repository
@@ -25,9 +26,12 @@ func NewFileStorageRepository(config *entity.Config) *FileStorageRepository {
 	repo := &FileStorageRepository{
 		config:     config,
 		partitions: make(map[string]*entity.Partition),
+		repairChan: make(chan string, 10),
 	}
 	// Load existing partitions and segments
 	repo.loadExistingData()
+	// Start repair worker
+	go repo.repairWorker()
 	return repo
 }
 
@@ -73,12 +77,12 @@ func (r *FileStorageRepository) loadPartition(partitionKey string) {
 			indexPath := filepath.Join(partitionDir, baseOffsetStr+".index")
 			if file, err := os.Open(indexPath); err == nil {
 				defer file.Close()
-				scanner := bufio.NewScanner(file)
-				count := uint64(0)
-				for scanner.Scan() {
-					count++
+				stat, err := file.Stat()
+				if err == nil {
+					size := stat.Size()
+					count := size / 16 // each entry 16 bytes
+					segment.NextOffset = baseOffset + uint64(count)
 				}
-				segment.NextOffset = baseOffset + count
 			}
 			partition.Segments = append(partition.Segments, segment)
 			if segment.NextOffset > partition.CurrentOffset {
@@ -141,24 +145,59 @@ func (r *FileStorageRepository) Append(record *entity.Record) error {
 	if _, err := storeFile.Write(record.Data); err != nil {
 		return err
 	}
-
-	// Write to .index file: offset and position
-	indexFile, err := os.OpenFile(activeSegment.IndexPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
+	if err := storeFile.Sync(); err != nil {
 		return err
 	}
-	defer indexFile.Close()
 
-	if err := binary.Write(indexFile, binary.BigEndian, record.Offset); err != nil {
-		return err
+	// Write to .index file with retry
+	var indexErr error
+	for retries := 0; retries < 3; retries++ {
+		indexFile, err := os.OpenFile(activeSegment.IndexPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			indexErr = err
+			continue
+		}
+		if err := binary.Write(indexFile, binary.BigEndian, record.Offset); err != nil {
+			indexFile.Close()
+			indexErr = err
+			continue
+		}
+		if err := binary.Write(indexFile, binary.BigEndian, uint64(position)); err != nil {
+			indexFile.Close()
+			indexErr = err
+			continue
+		}
+		if err := indexFile.Sync(); err != nil {
+			indexFile.Close()
+			indexErr = err
+			continue
+		}
+		indexFile.Close()
+		indexErr = nil
+		break
 	}
-	if err := binary.Write(indexFile, binary.BigEndian, uint64(position)); err != nil {
-		return err
+	if indexErr != nil {
+		log.Printf("Failed to write index after retries: %v", indexErr)
+		// Trigger repair
+		select {
+		case r.repairChan <- record.PartitionKey:
+		default:
+		}
+		return indexErr
 	}
 
 	// Update segment
 	activeSegment.AddRecord(recordSize)
 	partition.CurrentOffset = activeSegment.NextOffset
+
+	// Sanity check
+	if err := r.sanityCheck(activeSegment); err != nil {
+		log.Printf("Sanity check failed: %v, triggering repair", err)
+		select {
+		case r.repairChan <- record.PartitionKey:
+		default:
+		}
+	}
 
 	return nil
 }
@@ -238,6 +277,138 @@ func (r *FileStorageRepository) Read(partitionKey string, offset uint64) (*entit
 
 // Close closes the repository
 func (r *FileStorageRepository) Close() error {
-	// Nothing to close for file repo
+	close(r.repairChan)
 	return nil
+}
+
+// sanityCheck verifies store and index consistency for a segment
+func (r *FileStorageRepository) sanityCheck(seg *entity.Segment) error {
+	storeFile, err := os.Open(seg.StorePath)
+	if err != nil {
+		return err
+	}
+	defer storeFile.Close()
+
+	indexFile, err := os.Open(seg.IndexPath)
+	if err != nil {
+		return err
+	}
+	defer indexFile.Close()
+
+	storeCount := uint64(0)
+	pos := int64(0)
+	for {
+		var length uint32
+		if err := binary.Read(storeFile, binary.BigEndian, &length); err != nil {
+			break
+		}
+		pos += 4 + int64(length)
+		storeFile.Seek(pos, 0)
+		storeCount++
+	}
+
+	indexCount := uint64(0)
+	for {
+		var offset, position uint64
+		if err := binary.Read(indexFile, binary.BigEndian, &offset); err != nil {
+			break
+		}
+		if err := binary.Read(indexFile, binary.BigEndian, &position); err != nil {
+			break
+		}
+		indexCount++
+	}
+
+	if storeCount != indexCount {
+		return fmt.Errorf("inconsistency: store has %d, index has %d", storeCount, indexCount)
+	}
+	return nil
+}
+
+// repairWorker listens for repair requests and fixes inconsistencies
+func (r *FileStorageRepository) repairWorker() {
+	for partitionKey := range r.repairChan {
+		r.mu.Lock()
+		partition, exists := r.partitions[partitionKey]
+		if !exists {
+			r.mu.Unlock()
+			continue
+		}
+		// Check each segment
+		for _, seg := range partition.Segments {
+			r.repairSegment(seg)
+		}
+		r.mu.Unlock()
+	}
+}
+
+// repairSegment checks and repairs a segment
+func (r *FileStorageRepository) repairSegment(seg *entity.Segment) {
+	storeFile, err := os.Open(seg.StorePath)
+	if err != nil {
+		log.Printf("Failed to open store file for repair: %v", err)
+		return
+	}
+	defer storeFile.Close()
+
+	indexFile, err := os.OpenFile(seg.IndexPath, os.O_RDWR|os.O_CREATE, 0644)
+	if err != nil {
+		log.Printf("Failed to open index file for repair: %v", err)
+		return
+	}
+	defer indexFile.Close()
+
+	// Count index entries
+	indexCount := uint64(0)
+	for {
+		var offset, position uint64
+		if err := binary.Read(indexFile, binary.BigEndian, &offset); err != nil {
+			break
+		}
+		if err := binary.Read(indexFile, binary.BigEndian, &position); err != nil {
+			break
+		}
+		indexCount++
+	}
+
+	// Count store entries
+	storeCount := uint64(0)
+	pos := int64(0)
+	for {
+		var length uint32
+		if err := binary.Read(storeFile, binary.BigEndian, &length); err != nil {
+			break
+		}
+		pos += 4 + int64(length)
+		storeFile.Seek(pos, 0)
+		storeCount++
+	}
+
+	if storeCount > indexCount {
+		log.Printf("Repairing segment %s: store has %d, index has %d", seg.StorePath, storeCount, indexCount)
+		// Append missing index entries
+		storeFile.Seek(0, 0)
+		pos = 0
+		for i := uint64(0); i < storeCount; i++ {
+			var length uint32
+			binary.Read(storeFile, binary.BigEndian, &length)
+			// Skip data
+			storeFile.Seek(int64(length), 1)
+			if i >= indexCount {
+				// Append to index
+				offset := seg.BaseOffset + i
+				if err := binary.Write(indexFile, binary.BigEndian, offset); err != nil {
+					log.Printf("Failed to write offset to index: %v", err)
+					break
+				}
+				if err := binary.Write(indexFile, binary.BigEndian, uint64(pos)); err != nil {
+					log.Printf("Failed to write position to index: %v", err)
+					break
+				}
+				indexFile.Sync()
+			}
+			pos += 4 + int64(length)
+		}
+		log.Printf("Repair completed for segment %s", seg.StorePath)
+	}
 }

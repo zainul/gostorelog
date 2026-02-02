@@ -1,7 +1,6 @@
 package usecase
 
 import (
-	"io/ioutil"
 	"os"
 	"testing"
 
@@ -10,12 +9,14 @@ import (
 )
 
 func TestStorageUsecase_StoreAndRetrieve(t *testing.T) {
-	// Create temp dir
-	dir, err := ioutil.TempDir("", "gostorelog_usecase_test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(dir)
+	// Use test-data dir in project root
+	wd, _ := os.Getwd()
+	testDataDir := wd + "/../../test-data"
+	os.RemoveAll(testDataDir) // Clean up from previous runs
+	os.MkdirAll(testDataDir, 0755)
+	dir := testDataDir
+
+	// Note: Not removing dir at end to allow sanity check of generated files
 
 	config := &entity.Config{
 		DataDir:     dir,
@@ -25,8 +26,7 @@ func TestStorageUsecase_StoreAndRetrieve(t *testing.T) {
 	uc := NewStorageUsecase(repo)
 
 	// Store
-	err = uc.StoreRecord("test string", entity.DataTypeString, "test-partition")
-	if err != nil {
+	if err := uc.StoreRecord("test string", entity.DataTypeString, "test-partition"); err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
 
