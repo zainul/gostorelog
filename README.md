@@ -17,7 +17,8 @@ A persistent, sequential, immutable storage engine for Go, designed with clean a
 - **Graceful Shutdown**: Ensures data is persisted before shutdown.
 - **Consistency Checks**: Sanity checks after appends and automatic repair for store/index inconsistencies.
 - **Retry Mechanism**: Retries index writes on failure.
-- **Clean Architecture**: Organized into entity, repository, usecase, handler layers.
+- **Multi-Node Clustering**: Leader election via Redis, gossip protocol for node discovery, DNS-based address resolution.
+- **Clean Architecture**: Organized into entity, repository, usecase, handler, cluster layers.
 
 ## Architecture
 
@@ -51,10 +52,31 @@ A persistent, sequential, immutable storage engine for Go, designed with clean a
 
 Data types: 0=JSON, 1=Bytes, 2=String.
 
+## Clustering
+
+GoStoreLog supports multi-node clustering with leader election and gossip-based discovery:
+
+- **Leader Election**: Uses Redis for distributed locking to elect a leader node.
+- **Node Discovery**: Nodes use DNS resolution to find initial peers and gossip protocol for ongoing discovery.
+- **Example**: With nodes A (leader), B, C:
+  - A holds the leader lock in Redis.
+  - B and C resolve A's address via DNS and join the gossip cluster.
+  - All nodes discover each other through gossip.
+
+Set environment variables for cluster configuration. The leader node coordinates cluster activities, while followers can be promoted if the leader fails.
+
 ## Configuration
 
 - `DataDir`: Directory for data files (default: `./data`).
 - `MaxFileSize`: Max size per segment in bytes (default: 10MB).
+
+### Clustering Configuration (Environment Variables)
+- `NODE_ID`: Unique identifier for this node (default: `node1`).
+- `BIND_ADDR`: Address to bind the gossip listener (default: `0.0.0.0:7946`).
+- `ADVERTISE_ADDR`: Address to advertise to other nodes (default: `127.0.0.1:7946`).
+- `REDIS_ADDR`: Redis server address for leader election (default: `localhost:6379`).
+- `SERVICE_NAME`: DNS service name for node discovery (default: `gostorelog-cluster`).
+- `CLUSTER_PORT`: Port for cluster communication (default: `7946`).
 
 ## Testing
 
@@ -72,7 +94,7 @@ Test data is stored in the `test-data/` directory in the project root for easy i
 
 ## Future Enhancements
 
-- Multi-node support.
+- Data replication across cluster nodes.
 - Additional connectors (Kafka, Flink).
 - Compression, encryption.
 - Query capabilities.

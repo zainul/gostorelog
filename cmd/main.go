@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"gostorelog/internal/cluster"
 	"gostorelog/internal/entity"
 	"gostorelog/internal/handler"
 	"gostorelog/internal/repository"
@@ -19,6 +20,41 @@ func main() {
 	config := &entity.Config{
 		DataDir:     "./data",
 		MaxFileSize: 10 * 1024 * 1024, // 10MB
+	}
+
+	// Cluster configuration (example values)
+	nodeID := os.Getenv("NODE_ID")
+	if nodeID == "" {
+		nodeID = "node1"
+	}
+	bindAddr := os.Getenv("BIND_ADDR")
+	if bindAddr == "" {
+		bindAddr = "0.0.0.0:7946"
+	}
+	advertiseAddr := os.Getenv("ADVERTISE_ADDR")
+	if advertiseAddr == "" {
+		advertiseAddr = "127.0.0.1:7946"
+	}
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+	serviceName := os.Getenv("SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "gostorelog-cluster"
+	}
+	port := os.Getenv("CLUSTER_PORT")
+	if port == "" {
+		port = "7946"
+	}
+
+	// Initialize cluster manager
+	clusterManager, err := cluster.NewManager(nodeID, bindAddr, advertiseAddr, redisAddr, serviceName, port)
+	if err != nil {
+		log.Fatal("Failed to create cluster manager:", err)
+	}
+	if err := clusterManager.Start(); err != nil {
+		log.Fatal("Failed to start cluster:", err)
 	}
 
 	// Initialize layers
@@ -54,5 +90,6 @@ func main() {
 
 	connector.Close()
 	repo.Close()
+	clusterManager.Shutdown()
 	log.Println("Shutdown complete")
 }
