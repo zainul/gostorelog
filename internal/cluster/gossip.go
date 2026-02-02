@@ -14,14 +14,15 @@ type Gossip struct {
 }
 
 // NewGossip creates a new gossip instance
-func NewGossip(bindAddr, advertiseAddr string) (*Gossip, error) {
-	config := memberlist.DefaultLANConfig()
-	config.BindAddr = bindAddr
-	config.AdvertiseAddr = advertiseAddr
+func NewGossip(config *Config) (*Gossip, error) {
+	memberlistConfig := memberlist.DefaultLANConfig()
+	memberlistConfig.BindAddr = config.BindAddr
+	memberlistConfig.AdvertiseAddr = config.AdvertiseAddr
 	events := &eventDelegate{}
-	config.Events = events
+	memberlistConfig.Events = events
 
-	list, err := memberlist.Create(config)
+	log.Printf("Initializing gossip for node %s, bind %s, advertise %s", config.NodeID, config.BindAddr, config.AdvertiseAddr)
+	list, err := memberlist.Create(memberlistConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +39,13 @@ func NewGossip(bindAddr, advertiseAddr string) (*Gossip, error) {
 
 // Join joins the cluster with known nodes
 func (g *Gossip) Join(knownNodes []string) error {
+	log.Printf("Joining gossip cluster with known nodes: %v", knownNodes)
 	_, err := g.list.Join(knownNodes)
+	if err != nil {
+		log.Printf("Failed to join gossip cluster: %v", err)
+	} else {
+		log.Printf("Successfully joined gossip cluster")
+	}
 	return err
 }
 
@@ -49,6 +56,7 @@ func (g *Gossip) Members() []*memberlist.Node {
 
 // Shutdown shuts down the gossip
 func (g *Gossip) Shutdown() error {
+	log.Printf("Shutting down gossip")
 	return g.list.Shutdown()
 }
 

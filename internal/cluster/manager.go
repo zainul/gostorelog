@@ -9,57 +9,60 @@ import (
 
 // Manager manages the cluster
 type Manager struct {
+	config *Config
 	leaderElection *LeaderElection
 	gossip         *Gossip
 	dnsResolver    *DNSResolver
-	nodeID         string
 	isLeader       bool
 }
 
 // NewManager creates a new cluster manager
-func NewManager(nodeID, bindAddr, advertiseAddr, redisAddr, serviceName, port string) (*Manager, error) {
-	le := NewLeaderElection(redisAddr, nodeID)
-	gossip, err := NewGossip(bindAddr, advertiseAddr)
+func NewManager(config *Config) (*Manager, error) {
+	le := NewLeaderElection(config)
+	gossip, err := NewGossip(config)
 	if err != nil {
 		return nil, err
 	}
-	dns := NewDNSResolver(serviceName, port)
+	dns := NewDNSResolver(config)
 
+	log.Printf("Creating cluster manager for node %s", config.NodeID)
 	return &Manager{
+		config:         config,
 		leaderElection: le,
 		gossip:         gossip,
 		dnsResolver:    dns,
-		nodeID:         nodeID,
 	}, nil
 }
 
 // Start starts the cluster manager
 func (m *Manager) Start() error {
+	log.Printf("Starting cluster manager for node %s", m.config.NodeID)
 	// Try to become leader
 	if m.leaderElection.TryBecomeLeader() {
 		m.isLeader = true
-		log.Printf("This node is the leader")
+		log.Printf("Node %s started as leader", m.config.NodeID)
 		// As leader, start DNS watching to discover nodes
-		go m.dnsResolver.WatchNodes(30*time.Second, func(nodes []string) {
-			log.Printf("Discovered nodes: %v", nodes)
+		go m.dnsResolver.WatchNodes(m.config.WatchInterval, func(nodes []string) {
+			log.Printf("Leader %s discovered nodes via DNS: %v", m.config.NodeID, nodes)
 			// Join the gossip cluster
 			err := m.gossip.Join(nodes)
 			if err != nil {
-				log.Printf("Failed to join gossip: %v", err)
+				log.Printf("Leader %s failed to join gossip: %v", m.config.NodeID, err)
 			}
 		})
 	} else {
-		log.Printf("This node is a follower")
+		log.Printf("Node %s started as follower", m.config.NodeID)
 		// As follower, periodically try to become leader
 		go m.tryBecomeLeaderPeriodically()
 		// Discover initial nodes via DNS
 		nodes, err := m.dnsResolver.ResolveNodes()
 		if err != nil {
-			log.Printf("DNS resolution failed: %v", err)
+			log.Printf("Follower %s DNS resolution failed: %v", m.config.NodeID, err)
 		} else {
+			log.Printf("Follower %s initial nodes: %v", m.config.NodeID, nodes)
 			err := m.gossip.Join(nodes)
 			if err != nil {
-				log.Printf("Failed to join gossip: %v", err)
+				log.Printf("Follower %s failed to join gossip: %v", m.config.NodeID, err)
 			}
 		}
 	}
@@ -80,13 +83,14 @@ func (m *Manager) Members() []*memberlist.Node {
 func (m *Manager) tryBecomeLeaderPeriodically() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	log.Printf("Follower %s starting periodic leader election attempts", m.config.NodeID)
 	for range ticker.C {
 		if m.leaderElection.TryBecomeLeader() {
 			m.isLeader = true
-			log.Printf("Promoted to leader")
+			log.Printf("Follower %s promoted to leader", m.config.NodeID)
 			// Start DNS watching
-			go m.dnsResolver.WatchNodes(30*time.Second, func(nodes []string) {
-				log.Printf("Discovered nodes: %v", nodes)
+			go m.dnsResolver.WatchNodes(m.config.WatchInterval, func(nodes []string) {
+				log.Printf("New leader %s discovered nodes: %v", m.config.NodeID, nodes)
 				m.gossip.Join(nodes)
 			})
 			return
@@ -96,7 +100,10 @@ func (m *Manager) tryBecomeLeaderPeriodically() {
 
 // Shutdown shuts down the cluster manager
 func (m *Manager) Shutdown() {
-	m.leaderElection.Resign()
+	log.Printf("Shutting down cluster manager for node %s", m.config.NodeID)
+	if m.isLeader {
+		m.leaderElection.Resign()
+	}
 	m.gossip.Shutdown()
 	m.leaderElection.Close()
 }

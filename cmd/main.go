@@ -22,34 +22,32 @@ func main() {
 		MaxFileSize: 10 * 1024 * 1024, // 10MB
 	}
 
-	// Cluster configuration (example values)
-	nodeID := os.Getenv("NODE_ID")
-	if nodeID == "" {
-		nodeID = "node1"
+	// Cluster configuration
+	clusterConfig := cluster.DefaultConfig()
+	if nodeID := os.Getenv("NODE_ID"); nodeID != "" {
+		clusterConfig.NodeID = nodeID
 	}
-	bindAddr := os.Getenv("BIND_ADDR")
-	if bindAddr == "" {
-		bindAddr = "0.0.0.0:7946"
+	if bindAddr := os.Getenv("BIND_ADDR"); bindAddr != "" {
+		clusterConfig.BindAddr = bindAddr
 	}
-	advertiseAddr := os.Getenv("ADVERTISE_ADDR")
-	if advertiseAddr == "" {
-		advertiseAddr = "127.0.0.1:7946"
+	if advertiseAddr := os.Getenv("ADVERTISE_ADDR"); advertiseAddr != "" {
+		clusterConfig.AdvertiseAddr = advertiseAddr
 	}
-	redisAddr := os.Getenv("REDIS_ADDR")
-	if redisAddr == "" {
-		redisAddr = "localhost:6379"
+	if redisAddr := os.Getenv("REDIS_ADDR"); redisAddr != "" {
+		clusterConfig.RedisAddr = redisAddr
 	}
-	serviceName := os.Getenv("SERVICE_NAME")
-	if serviceName == "" {
-		serviceName = "gostorelog-cluster"
+	if serviceName := os.Getenv("SERVICE_NAME"); serviceName != "" {
+		clusterConfig.ServiceName = serviceName
 	}
-	port := os.Getenv("CLUSTER_PORT")
-	if port == "" {
-		port = "7946"
+	if port := os.Getenv("CLUSTER_PORT"); port != "" {
+		clusterConfig.ClusterPort = port
+	}
+	if dataDir := os.Getenv("DATA_DIR"); dataDir != "" {
+		clusterConfig.DataDir = dataDir
 	}
 
 	// Initialize cluster manager
-	clusterManager, err := cluster.NewManager(nodeID, bindAddr, advertiseAddr, redisAddr, serviceName, port)
+	clusterManager, err := cluster.NewManager(clusterConfig)
 	if err != nil {
 		log.Fatal("Failed to create cluster manager:", err)
 	}

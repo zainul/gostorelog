@@ -77,6 +77,7 @@ Set environment variables for cluster configuration. The leader node coordinates
 - `REDIS_ADDR`: Redis server address for leader election (default: `localhost:6379`).
 - `SERVICE_NAME`: DNS service name for node discovery (default: `gostorelog-cluster`).
 - `CLUSTER_PORT`: Port for cluster communication (default: `7946`).
+- `DATA_DIR`: Directory for data files (default: `./data`).
 
 ## Testing
 
@@ -90,7 +91,7 @@ Run benchmarks:
 go test -bench=. ./internal/repository/
 ```
 
-Test data is stored in the `test-data/` directory in the project root for easy inspection and maintenance. Unit tests clean up previous data at the start but leave files after completion for sanity checks. Segmentation tests create multiple segments and dump binary files to human-readable `.txt` versions. End-to-end tests include consistency checks and repair mechanisms.
+Test data is stored in the `test-data/` directory in the project root for easy inspection and maintenance. Unit tests clean up previous data at the start but leave files after completion for sanity checks. Segmentation tests create multiple segments and dump binary files to human-readable `.txt` versions. End-to-end tests include consistency checks and repair mechanisms. Cluster tests log detailed scenarios for leader election, DNS resolution, and node promotion.
 
 ## Future Enhancements
 
