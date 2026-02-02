@@ -68,7 +68,7 @@ Run benchmarks:
 go test -bench=. ./internal/repository/
 ```
 
-Test data is stored in the `test-data/` directory in the project root for easy inspection and maintenance. Unit tests clean up previous data at the start but leave files after completion for sanity checks. End-to-end tests include consistency checks and repair mechanisms.
+Test data is stored in the `test-data/` directory in the project root for easy inspection and maintenance. Unit tests clean up previous data at the start but leave files after completion for sanity checks. Segmentation tests create multiple segments and dump binary files to human-readable `.txt` versions. End-to-end tests include consistency checks and repair mechanisms.
 
 ## Future Enhancements
 

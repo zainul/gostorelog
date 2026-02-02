@@ -11,7 +11,7 @@ import (
 func TestStorageUsecase_StoreAndRetrieve(t *testing.T) {
 	// Use test-data dir in project root
 	wd, _ := os.Getwd()
-	testDataDir := wd + "/../../test-data"
+	testDataDir := wd + "/../../test-data/usecase_test"
 	os.RemoveAll(testDataDir) // Clean up from previous runs
 	os.MkdirAll(testDataDir, 0755)
 	dir := testDataDir
