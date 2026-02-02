@@ -79,11 +79,42 @@ func (h *HTTPHandler) Read(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(record)
 }
 
+// Replicate handles POST /replicate for receiving replicated data
+func (h *HTTPHandler) Replicate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Data         interface{} `json:"data"`
+		DataType     int         `json:"data_type"`
+		PartitionKey string      `json:"partition_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	// For replication, store the data as received, disable replication to avoid loop
+	// Temporarily unset replicator
+	impl := h.usecase.(*usecase.StorageUsecaseImpl)
+	replicator := impl.Replicator
+	impl.Replicator = nil
+	err := h.usecase.StoreRecord(req.Data, entity.DataType(req.DataType), req.PartitionKey)
+	impl.Replicator = replicator
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "replicated"})
+}
+
 // GetMux returns the HTTP mux for testing
 func (h *HTTPHandler) GetMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/publish", h.Publish)
 	mux.HandleFunc("/read", h.Read)
+	mux.HandleFunc("/replicate", h.Replicate)
 	return mux
 }
 

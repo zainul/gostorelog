@@ -10,7 +10,7 @@ A persistent, sequential, immutable storage engine for Go, designed with clean a
 - **Partitioning**: Data can be partitioned by user-defined keys.
 - **Auto-Segmentation**: Files are segmented when reaching max size (e.g., 10MB).
 - **Atomic Appends**: Ensures data safety during writes.
-- **HTTP API**: RESTful API for publishing and reading records with panic recovery middleware.
+- **HTTP API**: RESTful API for publishing and reading records with panic recovery middleware, including replication endpoint.
 - **Client SDK**: Go client for interacting with the storage engine.
 - **Pub/Sub Integration**: Uses a generic connector for message handling (currently Go channels, extensible to Kafka, etc.) with panic recovery.
 - **Recovery**: Automatically loads existing data on startup.
@@ -18,6 +18,7 @@ A persistent, sequential, immutable storage engine for Go, designed with clean a
 - **Consistency Checks**: Sanity checks after appends and automatic repair for store/index inconsistencies.
 - **Retry Mechanism**: Retries index writes on failure.
 - **Multi-Node Clustering**: Leader election via Redis, gossip protocol for node discovery, DNS-based address resolution.
+- **Data Replication**: Leader replicates data to followers via HTTP push for consistency across nodes.
 - **Clean Architecture**: Organized into entity, repository, usecase, handler, cluster layers.
 
 ## Architecture
@@ -49,21 +50,24 @@ A persistent, sequential, immutable storage engine for Go, designed with clean a
 
 - `POST /publish`: Publish a record. Body: `{"data": <data>, "data_type": <int>, "partition_key": <string>}`
 - `GET /read?partition=<key>&offset=<offset>`: Read a record by partition and offset.
+- `POST /replicate`: Receive replicated data from leader. Body: `{"data": <data>, "data_type": <int>, "partition_key": <string>}`
 
 Data types: 0=JSON, 1=Bytes, 2=String.
 
 ## Clustering
 
-GoStoreLog supports multi-node clustering with leader election and gossip-based discovery:
+GoStoreLog supports multi-node clustering with leader election, gossip-based discovery, and data replication:
 
 - **Leader Election**: Uses Redis for distributed locking to elect a leader node.
 - **Node Discovery**: Nodes use DNS resolution to find initial peers and gossip protocol for ongoing discovery.
+- **Data Replication**: Leader pushes new records to followers via HTTP for data consistency.
 - **Example**: With nodes A (leader), B, C:
   - A holds the leader lock in Redis.
   - B and C resolve A's address via DNS and join the gossip cluster.
-  - All nodes discover each other through gossip.
+  - When data is stored on A, it is automatically pushed to B and C via HTTP.
+  - All nodes maintain consistent data through replication.
 
-Set environment variables for cluster configuration. The leader node coordinates cluster activities, while followers can be promoted if the leader fails.
+Set environment variables for cluster configuration. The leader node coordinates cluster activities and replication, while followers can be promoted if the leader fails.
 
 ## Configuration
 

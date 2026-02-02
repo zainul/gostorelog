@@ -1,10 +1,16 @@
 package cluster
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
 	"time"
 
 	"github.com/hashicorp/memberlist"
+	"gostorelog/internal/entity"
 )
 
 // Manager manages the cluster
@@ -96,6 +102,65 @@ func (m *Manager) tryBecomeLeaderPeriodically() {
 			return
 		}
 	}
+}
+
+// Replicate sends the data to all followers
+func (m *Manager) Replicate(data interface{}, dataType entity.DataType, partitionKey string) error {
+	if !m.isLeader {
+		return nil // Only leader replicates
+	}
+
+	followers := m.getFollowers()
+	log.Printf("Leader %s replicating data to %d followers", m.config.NodeID, len(followers))
+
+	for _, node := range followers {
+		go func(n *memberlist.Node) {
+			err := m.sendDataToFollower(n, data, dataType, partitionKey)
+			if err != nil {
+				log.Printf("Failed to replicate to %s: %v", n.Name, err)
+			}
+		}(node)
+	}
+	return nil
+}
+
+// getFollowers returns the list of follower nodes
+func (m *Manager) getFollowers() []*memberlist.Node {
+	var followers []*memberlist.Node
+	for _, node := range m.gossip.Members() {
+		if node.Name != m.config.NodeID {
+			followers = append(followers, node)
+		}
+	}
+	return followers
+}
+
+// sendDataToFollower sends data to a follower via HTTP
+func (m *Manager) sendDataToFollower(node *memberlist.Node, data interface{}, dataType entity.DataType, partitionKey string) error {
+	url := fmt.Sprintf("http://%s/replicate", node.Addr.String())
+	payload := map[string]interface{}{
+		"data":          data,
+		"data_type":     dataType,
+		"partition_key": partitionKey,
+	}
+	jsonData, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.Post(url, "application/json", bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := ioutil.ReadAll(resp.Body)
+		return fmt.Errorf("replication failed: %s", string(body))
+	}
+
+	log.Printf("Successfully replicated data to %s", node.Name)
+	return nil
 }
 
 // Shutdown shuts down the cluster manager

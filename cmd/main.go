@@ -58,6 +58,7 @@ func main() {
 	// Initialize layers
 	repo := repository.NewFileStorageRepository(config)
 	uc := usecase.NewStorageUsecase(repo)
+	uc.SetReplicator(clusterManager) // Set cluster manager as replicator
 	connector := handler.NewGoPubSubConnector()
 	storageHandler := handler.NewStorageHandler(uc, connector)
 	httpHandler := handler.NewHTTPHandler(uc)
